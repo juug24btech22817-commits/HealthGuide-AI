@@ -10,8 +10,13 @@ const LYZR_CONFIG = {
     apiKey: 'sk-default-cct6kTZStziDusmcEoYBxr0MHNwPFRKY',
     userId: 'shaswatshaswat620@gmail.com',
     agentId: '69b2f60c88c4456ed85f58b9',
-    sessionId: '69b2f60c88c4456ed85f58b9-uc62e73gmvk',
-    assetUploadEndpoint: 'https://agent-prod.studio.lyzr.ai/v3/assets/upload'
+    sessionId: '69b2f60c88c4456ed85f58b9-0yi3hgnqk7o9',
+};
+
+// Gemini Vision API Configuration
+const GEMINI_CONFIG = {
+    apiKey: import.meta.env.VITE_GEMINI_API_KEY || 'AIzaSyDYMBCibf0aMZaMCpAH_gCRvxvKu6GXHMI',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
 };
 
 const Chatbot = () => {
@@ -68,12 +73,85 @@ const Chatbot = () => {
         }
     }, [displayedText, typingMessageId, messages]);
 
+    // Convert a File object to a base64 data string
+    const fileToBase64 = (file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]); // strip data:...;base64, prefix
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+
+    // Use Gemini Vision to analyze a tablet packet / prescription image
+    const analyzeImageWithGemini = async (file) => {
+        try {
+            const base64Data = await fileToBase64(file);
+            const mimeType = file.type || 'image/jpeg';
+
+            const requestBody = {
+                contents: [{
+                    parts: [
+                        {
+                            text: `You are a medical image analysis expert. Carefully examine this image and extract ALL visible information. 
+If it is a medicine / tablet / drug:
+- Full medicine name and brand name
+- Active ingredients and salt composition
+- Dosage (mg/ml)
+- Usage instructions or indications
+- Warnings or precautions visible
+- Manufacturer and batch/expiry if visible
+
+If it is a doctor's prescription:
+- Medicines prescribed (names, dosage, frequency)
+- Diagnosis or condition mentioned
+- Doctor's instructions
+- Patient details if visible
+
+If it is something else health-related, describe it in detail.
+Return a clear, structured summary of everything you can read from the image.`
+                        },
+                        {
+                            inline_data: {
+                                mime_type: mimeType,
+                                data: base64Data
+                            }
+                        }
+                    ]
+                }],
+                generationConfig: {
+                    temperature: 0.2,
+                    maxOutputTokens: 1024
+                }
+            };
+
+            const response = await fetch(`${GEMINI_CONFIG.endpoint}?key=${GEMINI_CONFIG.apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                console.error('Gemini Vision Error:', errText);
+                return null;
+            }
+
+            const data = await response.json();
+            const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            console.log('Gemini Vision result:', text);
+            return text || null;
+        } catch (error) {
+            console.error('Gemini Vision Error:', error);
+            return null;
+        }
+    };
+
+    // Upload a file to Lyzr Assets
     const uploadLyzrAsset = async (file) => {
         try {
             const formData = new FormData();
             formData.append('file', file);
-            
-            const response = await fetch(LYZR_CONFIG.assetUploadEndpoint, {
+
+            const response = await fetch('https://agent-prod.studio.lyzr.ai/v3/assets/upload/', {
                 method: 'POST',
                 headers: {
                     'x-api-key': LYZR_CONFIG.apiKey
@@ -81,11 +159,15 @@ const Chatbot = () => {
                 body: formData
             });
 
-            if (!response.ok) throw new Error('Asset upload failed');
+            if (!response.ok) {
+                const errText = await response.text();
+                console.error('Lyzr Asset Upload Error Response:', errText);
+                throw new Error('Asset upload failed');
+            }
 
             const data = await response.json();
-            console.log("Asset uploaded successfully. Asset ID:", data.asset_id);
-            return data.asset_id;
+            console.log('Lyzr Asset Upload Success:', data);
+            return data.asset_id; // returns the ID needed for chat inference
         } catch (error) {
             console.error('Lyzr Asset Upload Error:', error);
             return null;
@@ -101,10 +183,13 @@ const Chatbot = () => {
                 message: messageText
             };
 
-            if (assetIds.length > 0) {
-                body.asset_ids = assetIds;
+            // If we have uploaded assets, include them in the request
+            // Using 'assets' as the key based on latest Lyzr API patterns
+            if (assetIds && assetIds.length > 0) {
+                body.assets = assetIds; 
             }
 
+            console.log('Lyzr Chat Payload:', body);
             const response = await fetch(LYZR_CONFIG.endpoint, {
                 method: 'POST',
                 headers: {
@@ -114,9 +199,14 @@ const Chatbot = () => {
                 body: JSON.stringify(body)
             });
 
-            if (!response.ok) throw new Error('API request failed');
+            if (!response.ok) {
+                const errText = await response.text();
+                console.error('Lyzr AI API Error Response:', errText);
+                throw new Error('API request failed');
+            }
 
             const data = await response.json();
+            console.log('Lyzr Chat Response:', data);
             return data.response || "I'm sorry, I'm having trouble processing that right now.";
         } catch (error) {
             console.error('Lyzr AI Error:', error);
@@ -128,13 +218,8 @@ const Chatbot = () => {
         const text = inputValue.trim();
         if (!text && !pendingImage) return;
 
-        let userMessageContext = text;
         const currentImageUrl = previewUrl;
         const currentImageFile = pendingImage;
-
-        if (currentImageFile) {
-            userMessageContext = `[SYSTEM-LEVEL ANALYSIS REQUEST]: The user has attached an image of a health-related item (tablet/prescription). Please analyze this image context and provide detailed information, benefits, and health guidance based on the visual data provided. User Query: "${text}"`;
-        }
 
         // Add user message to UI
         const newMsg = { id: Date.now(), text, sender: 'user', imageUrl: currentImageUrl };
@@ -146,16 +231,30 @@ const Chatbot = () => {
         setPreviewUrl(null);
         setIsTyping(true);
 
-        // Upload and Call API
+        let finalMessage = text;
         let assetIds = [];
+
         if (currentImageFile) {
+            // Step 1: Upload the image to Lyzr Assets first
             const assetId = await uploadLyzrAsset(currentImageFile);
+            
             if (assetId) {
-                assetIds.push(assetId);
+                assetIds = [assetId];
+                // Context for the agent if no text is provided
+                if (!finalMessage) {
+                    finalMessage = "I've uploaded an image. Please analyze it and provide health guidance.";
+                }
+            } else {
+                // Fallback to Gemini if Lyzr upload fails (optional, keeping for robustness)
+                console.log('Lyzr upload failed, falling back to Gemini Vision extraction...');
+                const imageAnalysis = await analyzeImageWithGemini(currentImageFile);
+                if (imageAnalysis) {
+                    finalMessage = `The user uploaded a health-related image. Extracted info: ${imageAnalysis}. Question: ${text || 'Please analyze this.'}`;
+                }
             }
         }
 
-        const aiResponseText = await callLyzrAI(userMessageContext, assetIds);
+        const aiResponseText = await callLyzrAI(finalMessage, assetIds);
         
         // Add AI message empty, then start typewriter
         const newMessageId = Date.now();

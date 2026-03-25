@@ -22,7 +22,10 @@ function App() {
         <div className="blob blob-2"></div>
         <div className="blob blob-3"></div>
         <div className="blob blob-4"></div>
+        <div className="blob blob-5"></div>
+        <div className="blob blob-6"></div>
       </div>
+      <div className="noise-bg"></div>
 
       <Navbar />
       <Hero onGetStarted={handleGetStarted} />
