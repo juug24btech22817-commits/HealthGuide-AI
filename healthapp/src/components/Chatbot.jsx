@@ -1,22 +1,17 @@
 import { useState, useRef, useEffect } from 'react';
 import { IoSparkles, IoImageOutline, IoSend, IoCloseCircle } from 'react-icons/io5';
 import { marked } from 'marked';
-import DOMPurify from 'dompurify'; // Need to add this to dependancies for security! 
+import DOMPurify from 'dompurify';
 import { useIntersectionObserver } from '../hooks/useIntersectionObserver';
 
 // Lyzr AI Configuration
 const LYZR_CONFIG = {
-    endpoint: 'https://agent-prod.studio.lyzr.ai/v3/inference/chat/',
+    chatEndpoint: 'https://agent-prod.studio.lyzr.ai/v3/inference/chat/',
+    uploadEndpoint: 'https://agent-prod.studio.lyzr.ai/v3/assets/upload',
     apiKey: 'sk-default-cct6kTZStziDusmcEoYBxr0MHNwPFRKY',
     userId: 'shaswatshaswat620@gmail.com',
     agentId: '69b2f60c88c4456ed85f58b9',
-    sessionId: '69b2f60c88c4456ed85f58b9-0yi3hgnqk7o9',
-};
-
-// Gemini Vision API Configuration
-const GEMINI_CONFIG = {
-    apiKey: import.meta.env.VITE_GEMINI_API_KEY || 'AIzaSyDYMBCibf0aMZaMCpAH_gCRvxvKu6GXHMI',
-    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+    sessionId: '69b2f60c88c4456ed85f58b9-ggaaasehc6r',
 };
 
 const Chatbot = () => {
@@ -29,179 +24,96 @@ const Chatbot = () => {
     const [pendingImage, setPendingImage] = useState(null);
     const [previewUrl, setPreviewUrl] = useState(null);
     const [isTyping, setIsTyping] = useState(false);
-    
+
     // Typewriter effect state
     const [typingMessageId, setTypingMessageId] = useState(null);
-    const [displayedText, setDisplayedText] = useState("");
-    const typewriterSpeed = 8; // ms per character (lowered from 15 to 8 for faster but still visible pacing)
+    const [displayedText, setDisplayedText] = useState('');
+    const typewriterSpeed = 8;
 
     const chatContainerRef = useRef(null);
 
     const scrollToBottom = () => {
         if (chatContainerRef.current) {
-             // Let user scroll if they want, but snap bottom strictly within this container box 
-             // without affecting the whole HTML page scroll.
-             chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+            chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
         }
     };
 
     useEffect(() => {
-        // Only scroll when typing just finished so we are ready for the answer
-        if (isTyping || messages.length > 1) {
-             scrollToBottom();
-        }
+        if (isTyping || messages.length > 1) scrollToBottom();
     }, [messages, isTyping]);
 
     // Typewriter effect engine
     useEffect(() => {
         if (!typingMessageId) return;
-        
         const messageObject = messages.find(m => m.id === typingMessageId);
         if (!messageObject) return;
-
         const fullText = messageObject.text;
-        
         if (displayedText.length < fullText.length) {
             const timer = setTimeout(() => {
                 setDisplayedText(fullText.slice(0, displayedText.length + 1));
             }, typewriterSpeed);
-            
             return () => clearTimeout(timer);
         } else {
-            // Finished typing
             setTypingMessageId(null);
         }
     }, [displayedText, typingMessageId, messages]);
 
-    // Convert a File object to a base64 data string
-    const fileToBase64 = (file) => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(',')[1]); // strip data:...;base64, prefix
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-    });
-
-    // Use Gemini Vision to analyze a tablet packet / prescription image
-    const analyzeImageWithGemini = async (file) => {
-        try {
-            const base64Data = await fileToBase64(file);
-            const mimeType = file.type || 'image/jpeg';
-
-            const requestBody = {
-                contents: [{
-                    parts: [
-                        {
-                            text: `You are a medical image analysis expert. Carefully examine this image and extract ALL visible information. 
-If it is a medicine / tablet / drug:
-- Full medicine name and brand name
-- Active ingredients and salt composition
-- Dosage (mg/ml)
-- Usage instructions or indications
-- Warnings or precautions visible
-- Manufacturer and batch/expiry if visible
-
-If it is a doctor's prescription:
-- Medicines prescribed (names, dosage, frequency)
-- Diagnosis or condition mentioned
-- Doctor's instructions
-- Patient details if visible
-
-If it is something else health-related, describe it in detail.
-Return a clear, structured summary of everything you can read from the image.`
-                        },
-                        {
-                            inline_data: {
-                                mime_type: mimeType,
-                                data: base64Data
-                            }
-                        }
-                    ]
-                }],
-                generationConfig: {
-                    temperature: 0.2,
-                    maxOutputTokens: 1024
-                }
-            };
-
-            const response = await fetch(`${GEMINI_CONFIG.endpoint}?key=${GEMINI_CONFIG.apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody)
-            });
-
-            if (!response.ok) {
-                const errText = await response.text();
-                console.error('Gemini Vision Error:', errText);
-                return null;
-            }
-
-            const data = await response.json();
-            const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            console.log('Gemini Vision result:', text);
-            return text || null;
-        } catch (error) {
-            console.error('Gemini Vision Error:', error);
-            return null;
-        }
-    };
-
-    // Upload a file to Lyzr Assets
-    const uploadLyzrAsset = async (file) => {
+    // Upload image to Lyzr Assets and return asset_id
+    const uploadImageToLyzr = async (file) => {
         try {
             const formData = new FormData();
-            formData.append('file', file);
+            formData.append('files', file);
 
-            const response = await fetch('https://agent-prod.studio.lyzr.ai/v3/assets/upload/', {
+            const response = await fetch(LYZR_CONFIG.uploadEndpoint, {
                 method: 'POST',
-                headers: {
-                    'x-api-key': LYZR_CONFIG.apiKey
-                },
+                headers: { 'x-api-key': LYZR_CONFIG.apiKey },
                 body: formData
             });
 
             if (!response.ok) {
                 const errText = await response.text();
-                console.error('Lyzr Asset Upload Error Response:', errText);
-                throw new Error('Asset upload failed');
+                console.error('Lyzr Asset Upload Error:', response.status, errText);
+                return null;
             }
 
             const data = await response.json();
             console.log('Lyzr Asset Upload Success:', data);
-            return data.asset_id; // returns the ID needed for chat inference
+            // Response format: { results: [{ asset_id, success, ... }] }
+            return data?.results?.[0]?.asset_id || null;
         } catch (error) {
             console.error('Lyzr Asset Upload Error:', error);
             return null;
         }
     };
 
+    // Send message (with optional asset IDs) to Lyzr and get response
     const callLyzrAI = async (messageText, assetIds = []) => {
         try {
             const body = {
                 user_id: LYZR_CONFIG.userId,
                 agent_id: LYZR_CONFIG.agentId,
                 session_id: LYZR_CONFIG.sessionId,
-                message: messageText
+                message: messageText,
             };
 
-            // If we have uploaded assets, include them in the request
-            // Using 'assets' as the key based on latest Lyzr API patterns
-            if (assetIds && assetIds.length > 0) {
-                body.assets = assetIds; 
+            if (assetIds.length > 0) {
+                body.assets = assetIds;
             }
 
             console.log('Lyzr Chat Payload:', body);
-            const response = await fetch(LYZR_CONFIG.endpoint, {
+
+            const response = await fetch(LYZR_CONFIG.chatEndpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-api-key': LYZR_CONFIG.apiKey
+                    'x-api-key': LYZR_CONFIG.apiKey,
                 },
                 body: JSON.stringify(body)
             });
 
             if (!response.ok) {
                 const errText = await response.text();
-                console.error('Lyzr AI API Error Response:', errText);
+                console.error('Lyzr Chat Error:', response.status, errText);
                 throw new Error('API request failed');
             }
 
@@ -210,7 +122,7 @@ Return a clear, structured summary of everything you can read from the image.`
             return data.response || "I'm sorry, I'm having trouble processing that right now.";
         } catch (error) {
             console.error('Lyzr AI Error:', error);
-            return "Connection error. Please check your API key or network and try again.";
+            return "Connection error. Please check your network and try again.";
         }
     };
 
@@ -221,11 +133,11 @@ Return a clear, structured summary of everything you can read from the image.`
         const currentImageUrl = previewUrl;
         const currentImageFile = pendingImage;
 
-        // Add user message to UI
+        // Show user message immediately
         const newMsg = { id: Date.now(), text, sender: 'user', imageUrl: currentImageUrl };
         setMessages(prev => [...prev, newMsg]);
 
-        // Reset inputs immediately
+        // Reset inputs
         setInputValue('');
         setPendingImage(null);
         setPreviewUrl(null);
@@ -235,34 +147,34 @@ Return a clear, structured summary of everything you can read from the image.`
         let assetIds = [];
 
         if (currentImageFile) {
-            // Step 1: Upload the image to Lyzr Assets first
-            const assetId = await uploadLyzrAsset(currentImageFile);
-            
+            // Upload image to Lyzr and get asset_id
+            const assetId = await uploadImageToLyzr(currentImageFile);
+
             if (assetId) {
                 assetIds = [assetId];
-                // Context for the agent if no text is provided
+                // If no text provided, give a default prompt
                 if (!finalMessage) {
-                    finalMessage = "I've uploaded an image. Please analyze it and provide health guidance.";
+                    finalMessage = 'I have uploaded an image. Please analyze it and provide detailed health information about what you see.';
                 }
             } else {
-                // Fallback to Gemini if Lyzr upload fails (optional, keeping for robustness)
-                console.log('Lyzr upload failed, falling back to Gemini Vision extraction...');
-                const imageAnalysis = await analyzeImageWithGemini(currentImageFile);
-                if (imageAnalysis) {
-                    finalMessage = `The user uploaded a health-related image. Extracted info: ${imageAnalysis}. Question: ${text || 'Please analyze this.'}`;
-                }
+                // Upload failed — tell the user
+                setIsTyping(false);
+                setMessages(prev => [...prev, {
+                    id: Date.now(),
+                    text: '⚠️ Failed to upload the image to the server. Please check your connection and try again.',
+                    sender: 'ai'
+                }]);
+                return;
             }
         }
 
         const aiResponseText = await callLyzrAI(finalMessage, assetIds);
-        
-        // Add AI message empty, then start typewriter
+
         const newMessageId = Date.now();
         setIsTyping(false);
         setMessages(prev => [...prev, { id: newMessageId, text: aiResponseText, sender: 'ai' }]);
-        
-        // Start typing effect for this specific message id
-        setDisplayedText("");
+
+        setDisplayedText('');
         setTypingMessageId(newMessageId);
     };
 
@@ -279,7 +191,7 @@ Return a clear, structured summary of everything you can read from the image.`
             setPendingImage(file);
             setPreviewUrl(URL.createObjectURL(file));
         }
-        e.target.value = ''; // Reset file input
+        e.target.value = '';
     };
 
     const removeImage = () => {
@@ -306,7 +218,7 @@ Return a clear, structured summary of everything you can read from the image.`
                                 <p className="status-indicator"><span className="dot"></span> Online</p>
                             </div>
                         </div>
-                        
+
                         <div className="chat-messages" id="chatMessages" ref={chatContainerRef}>
                             {messages.map((msg) => (
                                 <div key={msg.id} className={`message ${msg.sender === 'user' ? 'user-message' : 'ai-message'}`}>
@@ -317,9 +229,9 @@ Return a clear, structured summary of everything you can read from the image.`
                                         {msg.text && (
                                             msg.sender === 'ai' ? (
                                                 msg.id === typingMessageId ? (
-                                                     <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(displayedText, { breaks: true })) }} />
+                                                    <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(displayedText, { breaks: true })) }} />
                                                 ) : (
-                                                     <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(msg.text, { breaks: true })) }} />
+                                                    <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(msg.text, { breaks: true })) }} />
                                                 )
                                             ) : (
                                                 <div>{msg.text}</div>
@@ -354,15 +266,15 @@ Return a clear, structured summary of everything you can read from the image.`
                                     </label>
                                 </div>
                                 <div className="input-wrapper">
-                                    <textarea 
+                                    <textarea
                                         value={inputValue}
                                         onChange={(e) => setInputValue(e.target.value)}
                                         onKeyDown={handleKeyDown}
-                                        placeholder={previewUrl ? "What is in this image?" : "Ask a health question..."} 
+                                        placeholder={previewUrl ? 'Ask about this image...' : 'Ask a health question...'}
                                         rows="1"
                                     />
                                     <button onClick={handleSendMessage} className="send-btn">
-                                        <IoSend style={{marginLeft: '4px'}}/>
+                                        <IoSend style={{ marginLeft: '4px' }} />
                                     </button>
                                 </div>
                             </div>
