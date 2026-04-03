@@ -8,10 +8,9 @@ import { useIntersectionObserver } from '../hooks/useIntersectionObserver';
 const LYZR_CONFIG = {
     chatEndpoint: 'https://agent-prod.studio.lyzr.ai/v3/inference/chat/',
     uploadEndpoint: 'https://agent-prod.studio.lyzr.ai/v3/assets/upload',
-    apiKey: 'sk-default-cct6kTZStziDusmcEoYBxr0MHNwPFRKY',
-    userId: 'shaswatshaswat620@gmail.com',
-    agentId: '69b2f60c88c4456ed85f58b9',
-    sessionId: '69b2f60c88c4456ed85f58b9-ggaaasehc6r',
+    apiKey: import.meta.env.VITE_LYZR_API_KEY || 'sk-default-cct6kTZStziDusmcEoYBxr0MHNwPFRKY',
+    userId: import.meta.env.VITE_LYZR_USER_ID || 'shaswatshaswat620@gmail.com',
+    agentId: import.meta.env.VITE_LYZR_AGENT_ID || '69b2f60c88c4456ed85f58b9',
 };
 
 const Chatbot = () => {
@@ -24,6 +23,13 @@ const Chatbot = () => {
     const [pendingImage, setPendingImage] = useState(null);
     const [previewUrl, setPreviewUrl] = useState(null);
     const [isTyping, setIsTyping] = useState(false);
+    const [sessionId, setSessionId] = useState('');
+
+    // Initialize session ID once on mount
+    useEffect(() => {
+        const randomStr = Math.random().toString(36).substring(7);
+        setSessionId(`${LYZR_CONFIG.agentId}-${randomStr}`);
+    }, []);
 
     // Typewriter effect state
     const [typingMessageId, setTypingMessageId] = useState(null);
@@ -92,7 +98,7 @@ const Chatbot = () => {
             const body = {
                 user_id: LYZR_CONFIG.userId,
                 agent_id: LYZR_CONFIG.agentId,
-                session_id: LYZR_CONFIG.sessionId,
+                session_id: sessionId,
                 message: messageText,
             };
 
