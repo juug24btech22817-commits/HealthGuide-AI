@@ -4,7 +4,14 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { useIntersectionObserver } from '../hooks/useIntersectionObserver';
 
-// Lyzr AI Configuration
+// NVIDIA AI Configuration (Fallback)
+const NVIDIA_CONFIG = {
+    endpoint: '/nvidia-api/v1/chat/completions',
+    apiKey: import.meta.env.VITE_NVIDIA_API_KEY || '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',
+    model: import.meta.env.VITE_NVIDIA_MODEL || 'moonshotai/kimi-k2.6',
+};
+
+// Lyzr AI Configuration (Primary)
 const LYZR_CONFIG = {
     chatEndpoint: 'https://agent-prod.studio.lyzr.ai/v3/inference/chat/',
     uploadEndpoint: 'https://agent-prod.studio.lyzr.ai/v3/assets/upload',
@@ -84,7 +91,6 @@ const Chatbot = () => {
 
             const data = await response.json();
             console.log('Lyzr Asset Upload Success:', data);
-            // Response format: { results: [{ asset_id, success, ... }] }
             return data?.results?.[0]?.asset_id || null;
         } catch (error) {
             console.error('Lyzr Asset Upload Error:', error);
@@ -92,7 +98,7 @@ const Chatbot = () => {
         }
     };
 
-    // Send message (with optional asset IDs) to Lyzr and get response
+    // Send message (with optional asset IDs) to Lyzr
     const callLyzrAI = async (messageText, assetIds = []) => {
         try {
             const body = {
@@ -106,8 +112,6 @@ const Chatbot = () => {
                 body.assets = assetIds;
             }
 
-            console.log('Lyzr Chat Payload:', body);
-
             const response = await fetch(LYZR_CONFIG.chatEndpoint, {
                 method: 'POST',
                 headers: {
@@ -117,17 +121,43 @@ const Chatbot = () => {
                 body: JSON.stringify(body)
             });
 
-            if (!response.ok) {
-                const errText = await response.text();
-                console.error('Lyzr Chat Error:', response.status, errText);
-                throw new Error('API request failed');
-            }
+            if (!response.ok) throw new Error('Lyzr API failed or credits exhausted');
 
             const data = await response.json();
-            console.log('Lyzr Chat Response:', data);
-            return data.response || "I'm sorry, I'm having trouble processing that right now.";
+            return data.response;
         } catch (error) {
-            console.error('Lyzr AI Error:', error);
+            console.warn('Lyzr AI failed, falling back to NVIDIA NIM:', error);
+            // FALLBACK TO NVIDIA
+            return await callNvidiaAI(messageText);
+        }
+    };
+
+    // Fallback: Send message to NVIDIA
+    const callNvidiaAI = async (messageText) => {
+        try {
+            const response = await fetch(NVIDIA_CONFIG.endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${NVIDIA_CONFIG.apiKey}`,
+                },
+                body: JSON.stringify({
+                    model: NVIDIA_CONFIG.model,
+                    messages: [
+                        { role: "system", content: "You are HealthGuide AI, a helpful medical assistant. Lyzr AI is currently unavailable, so you are providing support. Provide clear, empathetic health information with a medical disclaimer." },
+                        { role: "user", content: messageText }
+                    ],
+                    temperature: 0.5,
+                    max_tokens: 1024,
+                })
+            });
+
+            if (!response.ok) throw new Error('NVIDIA API failed');
+
+            const data = await response.json();
+            return data.choices?.[0]?.message?.content || "I'm sorry, I'm having trouble processing that right now.";
+        } catch (error) {
+            console.error('All AI services failed:', error);
             return "Connection error. Please check your network and try again.";
         }
     };
